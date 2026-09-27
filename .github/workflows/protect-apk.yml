@@ -50,6 +50,11 @@ on:
         required: false
         default: true
         type: boolean
+      arch:
+        description: "Target arsitektur native: arm64 / armv7 / both"
+        required: false
+        default: "both"
+        type: string
 
 # Dibutuhkan agar step "Bersihkan APK dari repo" bisa git push.
 permissions:
@@ -69,6 +74,7 @@ jobs:
       INPUT_DYNAMIC_REGISTER: ${{ inputs.dynamic_register }}
       INPUT_MAX_ATTEMPTS: ${{ inputs.max_attempts }}
       INPUT_CLEANUP: ${{ inputs.cleanup_apk }}
+      INPUT_ARCH: ${{ inputs.arch }}
       CLEANUP_REF: ${{ github.ref_name }}
 
     steps:
