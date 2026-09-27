@@ -22,6 +22,7 @@
 #   INPUT_DYNAMIC_REGISTER  true/false — pakai RegisterNatives
 #   INPUT_MAX_ATTEMPTS      maksimal percobaan dex2c (default 5)
 #   INPUT_CLEANUP           true/false — hapus APK dari repo setelah selesai
+#   INPUT_ARCH              arm64 / armv7 / both — target ABI native (default: both)
 #   CLEANUP_REF             branch untuk push cleanup (default: main)
 #
 # Format INPUT_INCLUDE / INPUT_EXCLUDE (satu per baris, boleh campur):
@@ -48,6 +49,7 @@ INPUT_OBFUSCATE="${INPUT_OBFUSCATE:-false}"
 INPUT_DYNAMIC_REGISTER="${INPUT_DYNAMIC_REGISTER:-false}"
 INPUT_MAX_ATTEMPTS="${INPUT_MAX_ATTEMPTS:-5}"
 INPUT_CLEANUP="${INPUT_CLEANUP:-true}"
+INPUT_ARCH="${INPUT_ARCH:-both}"
 CLEANUP_REF="${CLEANUP_REF:-main}"
 
 WORK_DIR="work"
@@ -387,13 +389,20 @@ PY
 }
 
 write_mk_files() {
-  cat > "$DEX2C_DIR/project/jni/Application.mk" <<'EOF_APP'
-APP_STL := c++_static
-APP_CPPFLAGS += -fvisibility=hidden
-APP_PLATFORM := android-19
-APP_ABI := armeabi-v7a arm64-v8a x86 x86_64
-APP_SHORT_COMMANDS := true
-EOF_APP
+  local abi
+  case "$INPUT_ARCH" in
+    arm64) abi="arm64-v8a" ;;
+    armv7) abi="armeabi-v7a" ;;
+    *)     abi="armeabi-v7a arm64-v8a" ;;
+  esac
+  {
+    echo "APP_STL := c++_static"
+    echo "APP_CPPFLAGS += -fvisibility=hidden"
+    echo "APP_PLATFORM := android-19"
+    echo "APP_ABI := $abi"
+    echo "APP_SHORT_COMMANDS := true"
+  } > "$DEX2C_DIR/project/jni/Application.mk"
+  log "Application.mk ditulis (APP_ABI := $abi)."
 
   cat > "$DEX2C_DIR/project/jni/Android.mk" <<EOF_MK
 LOCAL_PATH:= \$(call my-dir)
