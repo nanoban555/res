@@ -572,7 +572,9 @@ run_dcc_attempt() { # $1 = nomor percobaan ; return status dcc.py
   pushd "$DEX2C_DIR" >/dev/null
   rm -f output.apk
   rm -rf .tmp
-  local args=(-a input.apk -o output.apk --disable-signing)
+  # --force-keep-libs: JANGAN timpa APP_ABI dari Application.mk dengan ABI
+  # yang ada di APK asli. Hanya ABI pilihan user yang dikompilasi (lebih cepat).
+  local args=(-a input.apk -o output.apk --disable-signing --force-keep-libs)
   [ "$INPUT_OBFUSCATE" = "true" ] && args+=(-p)
   [ "$INPUT_DYNAMIC_REGISTER" = "true" ] && args+=(-d)
   : > "../../$logf"
@@ -583,6 +585,42 @@ run_dcc_attempt() { # $1 = nomor percobaan ; return status dcc.py
   monitor_progress "$logf" "$dcc_pid"
   wait "$dcc_pid"
   return $?
+}
+
+# Daftar ABI yang dipertahankan sesuai INPUT_ARCH.
+keep_abis() {
+  case "$INPUT_ARCH" in
+    arm64) printf 'arm64-v8a' ;;
+    armv7) printf 'armeabi-v7a' ;;
+    *)     printf 'armeabi-v7a arm64-v8a' ;;
+  esac
+}
+
+# Hapus folder lib/<abi> yang TIDAK dipilih user dari APK hasil dcc.py.
+# (dcc.py selalu membawa semua folder lib/ asli APK; tanpa ini APK final
+#  tetap berisi full arsitektur.)
+strip_unselected_abis() { # $1 = path apk
+  local apk="$1" keep abi entry removed=0
+  keep="$(keep_abis)"
+  log "ABI dipertahankan: $keep"
+  local abis
+  abis="$(unzip -l "$apk" 2>/dev/null | awk '{print $4}' | grep '^lib/' | cut -d/ -f2 | sort -u || true)"
+  [ -n "$abis" ] || { log "Tidak ada folder lib/ di APK."; return 0; }
+  for abi in $abis; do
+    case " $keep " in
+      *" $abi "*)
+        log "ABI dipertahankan: lib/$abi" ;;
+      *)
+        log "Menghapus ABI tak dipilih: lib/$abi"
+        zip -q -d "$apk" "lib/$abi/*" >/dev/null 2>&1 || true
+        removed=1 ;;
+    esac
+  done
+  if [ "$removed" = "1" ]; then
+    log "Folder ABI tak dipilih sudah dihapus."
+  else
+    log "Tidak ada ABI tak dipilih yang perlu dihapus."
+  fi
 }
 
 cmd_protect() {
@@ -619,10 +657,13 @@ cmd_protect() {
   done
 
   [ "$success" = "1" ] || die "dex2c gagal membuat output.apk"
-  progress 88 "dex2c selesai. Zipalign & verifikasi..."
+  progress 88 "dex2c selesai. Merapikan ABI & zipalign..."
 
   local unsigned_apk="$WORK_DIR/app-protected-unsigned-pre.apk"
   cp "$DEX2C_DIR/output.apk" "$unsigned_apk"
+
+  # Hapus folder lib/ arsitektur yang tidak dipilih user (sebelum zipalign)
+  strip_unselected_abis "$unsigned_apk"
 
   local zipalign_help=""
   zipalign_help="$(zipalign 2>&1 || true)"
@@ -633,10 +674,22 @@ cmd_protect() {
   fi
   test -f "$FINAL_APK" || die "zipalign gagal."
 
-  # verifikasi: .so ada & mengandung symbol native package
-  local so_name="lib${LIB_NAME}.so"
-  unzip -l "$FINAL_APK" | grep -q "$so_name" \
-    || { unzip -l "$FINAL_APK" | grep -e '\.so' || true; die "$so_name tidak ada di APK final."; }
+  # verifikasi: .so dex2c ada di SETIAP ABI yang dipilih user,
+  # dan tidak ada folder ABI lain di APK final.
+  local so_name="lib${LIB_NAME}.so" keep_abi
+  for keep_abi in $(keep_abis); do
+    unzip -l "$FINAL_APK" | grep -q "lib/$keep_abi/$so_name" \
+      || { unzip -l "$FINAL_APK" | grep -e 'lib/.*\.so' || true; die "$so_name tidak ada di lib/$keep_abi APK final."; }
+  done
+  local extra_abis
+  extra_abis="$(unzip -l "$FINAL_APK" 2>/dev/null | awk '{print $4}' | grep '^lib/' | cut -d/ -f2 | sort -u || true)"
+  for abi in $extra_abis; do
+    case " $(keep_abis) " in
+      *" $abi "*) ;;
+      *) die "ABI tak dipilih masih ada di APK final: lib/$abi" ;;
+    esac
+  done
+  log "Verifikasi ABI OK: hanya [$(keep_abis)] di APK final."
 
   local sym_count="0"
   sym_count="$(unzip -p "$FINAL_APK" "lib/*/$so_name" 2>/dev/null | strings | grep -c "$JNI_PREFIX" || true)"
