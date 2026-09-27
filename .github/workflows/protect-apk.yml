@@ -1,19 +1,78 @@
 name: Protect APK
 
+# Nama run dinamis biar gampang dibedakan di halaman Actions.
+run-name: Protect ${{ inputs.apk_path }}
+
 on:
   workflow_dispatch:
     inputs:
       apk_path:
-        description: APK path
+        description: "Path APK di repo (mis. apks/aplikasi.apk)"
         required: true
-        default: "Miku Moe.apk"
+        type: string
+      package_name:
+        description: "Package name aplikasi (kosong = auto-deteksi dari APK)"
+        required: false
+        default: ""
+        type: string
+      include_rules:
+        description: "Kelas/method yg diprotect, satu per baris (kosong = semua class di package)"
+        required: false
+        default: ""
+        type: string
+      exclude_rules:
+        description: "Kelas/method yg dikecualikan, satu per baris (diawali !)"
+        required: false
+        default: ""
+        type: string
+      lib_name:
+        description: "Nama native library .so (kosong = otomatis dari package)"
+        required: false
+        default: ""
+        type: string
+      obfuscate:
+        description: "Obfuscate string constants"
+        required: false
+        default: false
+        type: boolean
+      dynamic_register:
+        description: "Export native method via RegisterNatives"
+        required: false
+        default: false
+        type: boolean
+      max_attempts:
+        description: "Maksimal percobaan dex2c (auto-retry + blacklist)"
+        required: false
+        default: "5"
+        type: string
+      cleanup_apk:
+        description: "Hapus APK dari repo setelah selesai"
+        required: false
+        default: true
+        type: boolean
+
+# Dibutuhkan agar step "Bersihkan APK dari repo" bisa git push.
+permissions:
+  contents: write
 
 jobs:
   protect:
     runs-on: ubuntu-latest
 
+    env:
+      INPUT_APK: ${{ inputs.apk_path }}
+      INPUT_PACKAGE: ${{ inputs.package_name }}
+      INPUT_INCLUDE: ${{ inputs.include_rules }}
+      INPUT_EXCLUDE: ${{ inputs.exclude_rules }}
+      INPUT_LIB_NAME: ${{ inputs.lib_name }}
+      INPUT_OBFUSCATE: ${{ inputs.obfuscate }}
+      INPUT_DYNAMIC_REGISTER: ${{ inputs.dynamic_register }}
+      INPUT_MAX_ATTEMPTS: ${{ inputs.max_attempts }}
+      INPUT_CLEANUP: ${{ inputs.cleanup_apk }}
+      CLEANUP_REF: ${{ github.ref_name }}
+
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Java 17
@@ -22,24 +81,24 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Python 3
+      - name: Setup Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - name: Install Linux dependencies
+      - name: Install dependensi Linux
         run: |
           sudo apt-get update
           sudo apt-get install -y git wget curl unzip zip build-essential
 
-      - name: Configure Android SDK path
+      - name: Konfigurasi Android SDK
         run: |
           SDK_ROOT="/usr/local/lib/android/sdk"
           echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
           CMDLINE_BIN=$(find "$SDK_ROOT/cmdline-tools" -maxdepth 2 -type d -name bin | sort -r | head -n1)
           if [ -z "$CMDLINE_BIN" ]; then
-            echo "cmdline-tools not found under $SDK_ROOT, downloading..."
+            echo "cmdline-tools tidak ada, download..."
             curl -sSL -o /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
             mkdir -p "$SDK_ROOT/cmdline-tools"
             unzip -q /tmp/cmdline-tools.zip -d "$SDK_ROOT/cmdline-tools"
@@ -49,30 +108,29 @@ jobs:
           echo "$CMDLINE_BIN" >> "$GITHUB_PATH"
           echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
 
-      - name: Install Android NDK and Build Tools
+      - name: Install Android NDK & Build Tools
         run: |
           yes | sdkmanager --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
           sdkmanager --sdk_root="$ANDROID_HOME" "ndk;25.2.9519653" "build-tools;35.0.0"
 
-      - name: Set ANDROID_NDK_HOME
+      - name: Siapkan filter proteksi
         run: |
-          if [ -d "$ANDROID_HOME/ndk/25.2.9519653" ]; then
-            echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653" >> "$GITHUB_ENV"
-          elif [ -d "/usr/local/lib/android/sdk/ndk/25.2.9519653" ]; then
-            echo "ANDROID_NDK_HOME=/usr/local/lib/android/sdk/ndk/25.2.9519653" >> "$GITHUB_ENV"
-          fi
+          chmod +x scripts/protect-apk.sh
+          scripts/protect-apk.sh prepare
 
-      - name: Make script executable
-        run: chmod +x scripts/protect-apk.sh
+      - name: Setup dex2c & apktool
+        run: scripts/protect-apk.sh setup
 
-      - name: Protect APK
-        env:
-          INPUT_APK: ${{ github.event.inputs.apk_path }}
-        run: scripts/protect-apk.sh
+      - name: Protect APK (dex2c)
+        run: scripts/protect-apk.sh protect
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: miku-protected-universal-unsigned
-          path: output/miku-protected-universal-unsigned.apk
+          name: app-protected-unsigned
+          path: output/app-protected-unsigned.apk
           if-no-files-found: error
+
+      - name: Bersihkan APK dari repo
+        if: ${{ inputs.cleanup_apk }}
+        run: scripts/protect-apk.sh cleanup
