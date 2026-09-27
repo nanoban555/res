@@ -1,0 +1,78 @@
+name: Protect APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_path:
+        description: APK path
+        required: true
+        default: "Miku Moe.apk"
+
+jobs:
+  protect:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git wget curl unzip zip build-essential
+
+      - name: Configure Android SDK path
+        run: |
+          SDK_ROOT="/usr/local/lib/android/sdk"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          CMDLINE_BIN=$(find "$SDK_ROOT/cmdline-tools" -maxdepth 2 -type d -name bin | sort -r | head -n1)
+          if [ -z "$CMDLINE_BIN" ]; then
+            echo "cmdline-tools not found under $SDK_ROOT, downloading..."
+            curl -sSL -o /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            mkdir -p "$SDK_ROOT/cmdline-tools"
+            unzip -q /tmp/cmdline-tools.zip -d "$SDK_ROOT/cmdline-tools"
+            mv "$SDK_ROOT/cmdline-tools/cmdline-tools" "$SDK_ROOT/cmdline-tools/latest"
+            CMDLINE_BIN="$SDK_ROOT/cmdline-tools/latest/bin"
+          fi
+          echo "$CMDLINE_BIN" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+
+      - name: Install Android NDK and Build Tools
+        run: |
+          yes | sdkmanager --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+          sdkmanager --sdk_root="$ANDROID_HOME" "ndk;25.2.9519653" "build-tools;35.0.0"
+
+      - name: Set ANDROID_NDK_HOME
+        run: |
+          if [ -d "$ANDROID_HOME/ndk/25.2.9519653" ]; then
+            echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653" >> "$GITHUB_ENV"
+          elif [ -d "/usr/local/lib/android/sdk/ndk/25.2.9519653" ]; then
+            echo "ANDROID_NDK_HOME=/usr/local/lib/android/sdk/ndk/25.2.9519653" >> "$GITHUB_ENV"
+          fi
+
+      - name: Make script executable
+        run: chmod +x scripts/protect-apk.sh
+
+      - name: Protect APK
+        env:
+          INPUT_APK: ${{ github.event.inputs.apk_path }}
+        run: scripts/protect-apk.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: miku-protected-universal-unsigned
+          path: output/miku-protected-universal-unsigned.apk
+          if-no-files-found: error
