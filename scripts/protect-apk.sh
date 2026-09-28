@@ -18,6 +18,8 @@
 #   INPUT_INCLUDE           daftar include, satu per baris (kosong = semua class di package)
 #   INPUT_EXCLUDE           daftar exclude, satu per baris (diawali ! = blacklist)
 #   INPUT_LIB_NAME          nama native library, kosong = otomatis dari package
+#   INPUT_CUSTOM_LOADER     kelas loader dex2c (default: miku.moe.app.DccApplication,
+#                           bawaan dex2c: amimo.dcc.DccApplication)
 #   INPUT_OBFUSCATE         true/false — obfuscate string constants
 #   INPUT_DYNAMIC_REGISTER  true/false — pakai RegisterNatives
 #   INPUT_MAX_ATTEMPTS      maksimal percobaan dex2c (default 5)
@@ -50,6 +52,7 @@ INPUT_DYNAMIC_REGISTER="${INPUT_DYNAMIC_REGISTER:-false}"
 INPUT_MAX_ATTEMPTS="${INPUT_MAX_ATTEMPTS:-5}"
 INPUT_CLEANUP="${INPUT_CLEANUP:-true}"
 INPUT_ARCH="${INPUT_ARCH:-both}"
+INPUT_CUSTOM_LOADER="${INPUT_CUSTOM_LOADER:-miku.moe.app.DccApplication}"
 CLEANUP_REF="${CLEANUP_REF:-main}"
 
 WORK_DIR="work"
@@ -236,6 +239,18 @@ cmd_prepare() {
   # nama modul NDK: huruf kecil, alnum + underscore
   lib_name="$(printf '%s' "$lib_name" | tr -cd 'a-zA-Z0-9_' | tr 'A-Z' 'a-z')"
   [ -n "$lib_name" ] || die "LIB_NAME kosong setelah sanitasi."
+
+  # validasi format custom loader: harus package.Class
+  case "$INPUT_CUSTOM_LOADER" in
+    *.*)
+      case "$INPUT_CUSTOM_LOADER" in
+        *[!a-zA-Z0-9._]*|""|.*|*..*|*.)
+          die "INPUT_CUSTOM_LOADER tidak valid: '$INPUT_CUSTOM_LOADER'" ;;
+      esac ;;
+    *)
+      die "INPUT_CUSTOM_LOADER harus format package.Class, mis. miku.moe.app.DccApplication" ;;
+  esac
+  log "Loader class dex2c: $INPUT_CUSTOM_LOADER"
 
   save_state package    "$pkg"
   save_state pkg_path   "$pkg_path"
@@ -574,7 +589,10 @@ run_dcc_attempt() { # $1 = nomor percobaan ; return status dcc.py
   rm -rf .tmp
   # --force-keep-libs: JANGAN timpa APP_ABI dari Application.mk dengan ABI
   # yang ada di APK asli. Hanya ABI pilihan user yang dikompilasi (lebih cepat).
-  local args=(-a input.apk -o output.apk --disable-signing --force-keep-libs)
+  # --custom-loader: ganti amimo.dcc.DccApplication bawaan dex2c dengan kelas
+  # loader branding sendiri (mis. miku.moe.app.DccApplication).
+  local args=(-a input.apk -o output.apk --disable-signing --force-keep-libs
+             --custom-loader "$INPUT_CUSTOM_LOADER")
   [ "$INPUT_OBFUSCATE" = "true" ] && args+=(-p)
   [ "$INPUT_DYNAMIC_REGISTER" = "true" ] && args+=(-d)
   : > "../../$logf"

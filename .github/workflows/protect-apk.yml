@@ -30,6 +30,11 @@ on:
         required: false
         default: ""
         type: string
+      custom_loader:
+        description: "Kelas loader dex2c (default: miku.moe.app.DccApplication)"
+        required: false
+        default: "miku.moe.app.DccApplication"
+        type: string
       obfuscate:
         description: "Obfuscate string constants"
         required: false
@@ -70,6 +75,7 @@ jobs:
       INPUT_INCLUDE: ${{ inputs.include_rules }}
       INPUT_EXCLUDE: ${{ inputs.exclude_rules }}
       INPUT_LIB_NAME: ${{ inputs.lib_name }}
+      INPUT_CUSTOM_LOADER: ${{ inputs.custom_loader }}
       INPUT_OBFUSCATE: ${{ inputs.obfuscate }}
       INPUT_DYNAMIC_REGISTER: ${{ inputs.dynamic_register }}
       INPUT_MAX_ATTEMPTS: ${{ inputs.max_attempts }}
